@@ -1,0 +1,46 @@
+# =========================================================
+# Backup diário do banco do Supabase (método oficial do Supabase)
+#
+# Como usar: no repositório PRIVADO do GitHub, crie o arquivo
+#   .github/workflows/backup.yml
+# e cole este conteúdo. O endereço do banco fica no secret
+# SUPABASE_DB_URL (Settings > Secrets and variables > Actions).
+#
+# Roda todo dia às 06:00 (horário de Brasília) e também pelo botão
+# "Run workflow" na aba Actions. Cada dia vira um commit, então dá para
+# voltar a qualquer versão pelo histórico.
+# Fotos (Storage) não entram aqui — guarde os arquivos originais.
+# =========================================================
+name: backup-database
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * *' # 09:00 UTC = 06:00 em São Paulo
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Backup das permissões (roles)
+        run: supabase db dump --db-url "$SUPABASE_DB_URL" -f roles.sql --role-only
+
+      - name: Backup da estrutura (tabelas, regras, funções)
+        run: supabase db dump --db-url "$SUPABASE_DB_URL" -f schema.sql
+
+      - name: Backup dos dados
+        run: supabase db dump --db-url "$SUPABASE_DB_URL" -f data.sql --data-only --use-copy
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Backup diário do banco

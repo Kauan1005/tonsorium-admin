@@ -1,0 +1,50 @@
+# =========================================================
+# Restaurar um backup em um projeto NOVO do Supabase
+#
+# Como usar (detalhes em supabase/RESTAURAR-BACKUP.md):
+#   1. No repositório tonsorium-backup, crie o arquivo
+#      .github/workflows/restore.yml e cole este conteúdo.
+#   2. Crie o secret RESTORE_DB_URL com o endereço (Session pooler)
+#      do projeto NOVO. Nunca use aqui o endereço do projeto que está
+#      no ar — por isso ele fica num secret separado do backup.
+#   3. Aba Actions > restore-database > Run workflow.
+# =========================================================
+name: restore-database
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_ref:
+        description: 'Versão do backup: "main" = a mais recente, ou o código do commit de um dia específico'
+        required: true
+        default: main
+      confirm:
+        description: 'Digite RESTAURAR para confirmar (o destino precisa ser um projeto NOVO e vazio)'
+        required: true
+
+jobs:
+  restore:
+    if: ${{ inputs.confirm == 'RESTAURAR' }}
+    runs-on: ubuntu-latest
+    env:
+      RESTORE_DB_URL: ${{ secrets.RESTORE_DB_URL }}
+      # Mesma imagem usada pelo backup (garante que o psql entende o arquivo gerado).
+      PG_IMAGE: public.ecr.aws/supabase/postgres:17.11.0.011
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.backup_ref }}
+
+      - name: Conferir arquivos do backup
+        run: ls -la roles.sql schema.sql data.sql
+
+      - name: Restaurar (tudo ou nada — se der erro, nada é gravado)
+        run: |
+          docker run --rm --network host -v "$PWD:/backup" -w /backup --entrypoint psql "$PG_IMAGE" \
+            --single-transaction \
+            --variable ON_ERROR_STOP=1 \
+            --file roles.sql \
+            --file schema.sql \
+            --command 'SET session_replication_role = replica' \
+            --file data.sql \
+            --dbname "$RESTORE_DB_URL"
