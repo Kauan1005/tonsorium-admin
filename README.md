@@ -1,8 +1,76 @@
-# Tonsorium Admin
+# Tonsorium — Painel da barbearia
 
-Painel para editar o conteúdo do site (pasta `Tonsorium Publico`), moderar
-as avaliações e cuidar da **agenda dos barbeiros**. React + TypeScript + Vite +
-Supabase.
+Painel administrativo de uma barbearia real em Itapevi/SP, em produção. O dono
+edita todo o conteúdo do site sem mexer em código, modera as avaliações e
+gerencia a equipe; cada barbeiro tem login próprio para marcar a agenda, e o
+site público mostra na hora quais horários estão ocupados.
+
+- Site público: [tonsorium-site](https://github.com/Kauan1005/tonsorium-site) · no ar em [tonsorium.netlify.app](https://tonsorium.netlify.app)
+- Stack: React 18 + TypeScript + Vite · Supabase (Postgres, Auth com MFA, Storage, Edge Functions em Deno, pg_cron) · Netlify
+
+## Destaques
+
+- **Agenda por barbeiro.** Grade de horários do dia (todos os barbeiros lado a
+  lado para o admin), marcação com cliente, serviço e especificações, bloqueio
+  de folga em um toque. O banco impede dois horários sobrepostos para o mesmo
+  barbeiro (restrição de exclusão com `tstzrange`).
+- **Permissões decididas pelo banco, não pela tela.** Papéis admin, barbeiro e
+  cliente aplicados com Row Level Security e triggers no Postgres: um barbeiro só
+  lê e altera a própria agenda e só os campos permitidos do próprio perfil,
+  mesmo chamando a API direto.
+- **Verificação em duas etapas (TOTP).** Obrigatória para o admin. Depois de
+  ativada, as funções de permissão exigem a sessão `aal2`: uma senha vazada
+  sozinha não libera dados.
+- **Logins criados pelo admin.** Uma Edge Function com a chave de serviço (que
+  nunca vai ao navegador) cria a conta, define senha provisória e desativa o 2FA
+  de um barbeiro que perdeu o celular. O barbeiro troca a senha no primeiro acesso.
+- **Horários ocupados no site sem expor clientes.** O público não lê a tabela da
+  agenda; uma função `SECURITY DEFINER` devolve só barbeiro, início e fim.
+- **Fotos e vídeos convertidos no navegador.** Fotos HEIC do iPhone e vídeos em
+  qualquer formato viram JPG/MP4 antes do envio (heic2any e ffmpeg.wasm).
+- **LGPD.** Dados da agenda apagados automaticamente após 12 meses (pg_cron),
+  exclusão de conta pelo próprio cliente e acesso a dados de clientes restrito.
+- **Cabeçalhos de segurança.** Content-Security-Policy, HSTS, `frame-ancestors`
+  e `noindex` no painel.
+
+## Testes de segurança do banco
+
+`supabase/tests/rls.test.mjs` sobe o `schema.sql` num Postgres local (PGlite),
+imitando o Supabase, e confere 61 cenários: barbeiro tentando ler ou mexer na
+agenda de outro, cliente tentando virar admin, visitante tentando ler dados de
+clientes, admin sem o código do 2FA, sobreposição de horários, uploads fora da
+pasta permitida e mais. Roda sem Docker e sem conta:
+
+```
+npm install
+npm run test:db
+```
+
+## Estrutura
+
+```
+src/
+  pages/sections/   abas do painel (Agenda, Meu perfil, Equipe e acessos, conteúdo...)
+  hooks/useAuth.ts  login, papel da conta, 2FA e senha provisória
+  lib/              cliente Supabase, horários no fuso de São Paulo, conversão de mídia
+supabase/
+  schema.sql        tabelas, regras de acesso (RLS), funções e triggers (idempotente)
+  functions/        Edge Functions: manage-staff (logins) e sync-google-reviews
+  tests/            testes de segurança do banco
+```
+
+## Direitos
+
+© 2026 Kauan ([@Kauan1005](https://github.com/Kauan1005)). Código publicado para
+fins de portfólio: você pode ler e estudar, mas **todos os direitos são
+reservados** e o código não pode ser copiado nem reutilizado sem autorização. A
+marca, o logotipo e as imagens da Tonsorium pertencem à barbearia.
+
+---
+
+# Guia de instalação e operação
+
+O restante deste documento é o manual usado para instalar e manter o projeto.
 
 ## Quem entra no painel
 
