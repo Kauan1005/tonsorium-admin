@@ -25,7 +25,12 @@ function useGooglePlace() {
   const [saved, setSaved] = useState<GooglePlace>(EMPTY_PLACE);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const dirty = data.place_id !== saved.place_id || data.show_on_site !== saved.show_on_site;
+  const dirty =
+    data.place_id !== saved.place_id ||
+    data.show_on_site !== saved.show_on_site ||
+    data.rating !== saved.rating ||
+    data.user_rating_count !== saved.user_rating_count ||
+    data.maps_uri !== saved.maps_uri;
 
   async function fetchPlace(): Promise<GooglePlace> {
     const [{ data: row, error }, { data: lastError }] = await Promise.all([
@@ -59,18 +64,40 @@ function useGooglePlace() {
   }
 
   async function save() {
+    // Nota e total andam juntos: o site só mostra a nota com o total.
+    if ((data.rating == null) !== (data.user_rating_count == null)) {
+      toast('Preencha a nota e o total de avaliações juntos (ou deixe os dois vazios).', 'error');
+      return false;
+    }
+    if (data.maps_uri && !/^https:\/\/[^\s"'<>]+$/.test(data.maps_uri)) {
+      toast('O link da página no Google precisa começar com https://', 'error');
+      return false;
+    }
+    // Sem link informado, usa a página da barbearia no Google Maps pelo Place ID.
+    const next: GooglePlace = {
+      ...data,
+      maps_uri:
+        data.maps_uri || (data.place_id ? `https://www.google.com/maps/place/?q=place_id:${data.place_id}` : ''),
+    };
     setSaving(true);
     const { error } = await supabase
       .from('google_place')
-      .update({ place_id: data.place_id, show_on_site: data.show_on_site })
+      .update({
+        place_id: next.place_id,
+        show_on_site: next.show_on_site,
+        rating: next.rating,
+        user_rating_count: next.user_rating_count,
+        maps_uri: next.maps_uri,
+      })
       .eq('id', 1);
     setSaving(false);
     if (error) {
       toastError('Erro ao salvar', error);
       return false;
     }
-    setSaved(data);
-    toast('Salvo com sucesso.');
+    setData(next);
+    setSaved(next);
+    toast('Salvo. A nota já aparece no site.');
     return true;
   }
 
@@ -91,6 +118,33 @@ export default function ReviewsSection() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const place = useGooglePlace();
+  // A nota é digitada como texto ("4,9") e guardada como número (4.9).
+  const [ratingDraft, setRatingDraft] = useState('');
+  const [ratingError, setRatingError] = useState('');
+  const savedRating = place.loading ? undefined : place.data.rating;
+  useEffect(() => {
+    if (savedRating === undefined) return;
+    setRatingDraft(savedRating != null ? Number(savedRating).toFixed(1).replace('.', ',') : '');
+    // Só ao carregar/recarregar do banco; enquanto digita, o rascunho manda.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [place.loading]);
+
+  function changeRating(text: string) {
+    const clean = text.replace(/[^0-9.,]/g, '');
+    setRatingDraft(clean);
+    if (clean === '') {
+      setRatingError('');
+      place.update('rating', null);
+      return;
+    }
+    const value = Number(clean.replace(',', '.'));
+    if (!Number.isFinite(value) || value < 1 || value > 5) {
+      setRatingError('A nota vai de 1,0 a 5,0.');
+      return;
+    }
+    setRatingError('');
+    place.update('rating', Math.round(value * 10) / 10);
+  }
   const [googleReviews, setGoogleReviews] = useState<GoogleReview[]>([]);
   const [syncing, setSyncing] = useState(false);
 
@@ -285,8 +339,9 @@ export default function ReviewsSection() {
 
       <h3 className="panel-subtitle">Avaliações do Google</h3>
       <p className="panel-sub" style={{ marginTop: -8 }}>
-        O site mostra a nota geral do Google e as avaliações mais relevantes (o Google libera no máximo 5). A
-        sincronização roda automaticamente uma vez por dia.
+        O site mostra a nota da barbearia no Google, com o total de avaliações e um link para a página no Google.
+        Preencha a nota e o total abaixo e atualize quando mudarem. Se um dia a sincronização automática for ativada,
+        ela passa a atualizar esses números sozinha e também traz os comentários.
       </p>
 
       <label>
@@ -312,6 +367,40 @@ export default function ReviewsSection() {
           onChange={(e) => place.update('show_on_site', e.target.checked)}
         />
         Mostrar avaliações do Google no site
+      </label>
+
+      <div className="item-row">
+        <label>
+          Nota no Google
+          <input
+            value={ratingDraft}
+            onChange={(e) => changeRating(e.target.value)}
+            inputMode="decimal"
+            placeholder="Ex: 5,0"
+            maxLength={3}
+          />
+        </label>
+        <label>
+          Total de avaliações
+          <input
+            value={place.data.user_rating_count ?? ''}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
+              place.update('user_rating_count', digits === '' ? null : Number(digits));
+            }}
+            inputMode="numeric"
+            placeholder="Ex: 53"
+          />
+        </label>
+      </div>
+      {ratingError && <p className="error-text" style={{ marginTop: -8, marginBottom: 12 }}>{ratingError}</p>}
+      <label>
+        Link da página no Google (opcional)
+        <input
+          value={place.data.maps_uri}
+          onChange={(e) => place.update('maps_uri', e.target.value.trim())}
+          placeholder="Vazio = usa a página da barbearia no Google Maps"
+        />
       </label>
 
       <SaveBar saving={place.saving} dirty={place.dirty} onSave={place.save} />
